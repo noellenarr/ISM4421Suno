@@ -3,6 +3,27 @@
 
 const BASE = "https://api.sunoapi.org/api/v1";
 
+// Supabase project used for login. The URL and publishable key are public values
+// (they also ship in the browser), so defaults are fine; env vars can override them.
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://ezbmuthkuytkycgxokoh.supabase.co";
+const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || "sb_publishable_gmYQdCfC5rEnmMQJyUW47A_3il6yA1y";
+
+// Returns the logged-in Supabase user for this request, or null.
+async function getUser(req) {
+  const auth = req.headers.get("authorization") || "";
+  if (!auth.startsWith("Bearer ")) return null;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: auth },
+    });
+    if (!res.ok) return null;
+    const user = await res.json();
+    return user?.id ? user : null;
+  } catch {
+    return null;
+  }
+}
+
 const json = (status, body) =>
   new Response(JSON.stringify(body), {
     status,
@@ -29,6 +50,11 @@ export default async (req) => {
   const key = process.env.SUNO_API_KEY;
   if (!key) {
     return json(500, { code: 500, msg: "SUNO_API_KEY is not set in Netlify environment variables." });
+  }
+
+  // Only logged-in users can use the API (protects your Suno credits).
+  if (!(await getUser(req))) {
+    return json(401, { code: 401, msg: "Please log in first." });
   }
 
   const url = new URL(req.url);

@@ -90,6 +90,15 @@
   .tactions { display: flex; gap: 14px; margin-top: 4px; }
   .tactions a, .tactions button { font-size: 12px; color: var(--accent); text-decoration: none; background: none; border: 0; padding: 0; cursor: pointer; font-weight: 600; }
   pre.lyrics { white-space: pre-wrap; font: 13px/1.5 inherit; background: var(--input); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 8px 0 0; max-height: 220px; overflow: auto; }
+  .auth { max-width: 400px; margin: 40px auto 0; }
+  .auth h2 { margin: 0 0 4px; font-size: 20px; }
+  .auth p { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+  .auth .links { display: flex; justify-content: space-between; margin-top: 14px; }
+  .user { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .user .email { font-size: 13px; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ghost { border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  .ghost:hover { border-color: var(--accent); }
+  .loading { text-align: center; color: var(--muted); padding: 60px 0; }
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 30px; }
 </style>
 </head>
@@ -100,10 +109,42 @@
       <h1>🎵 <span>Suno Studio</span></h1>
       <p class="sub">Type an idea. Get a song.</p>
     </div>
-    <div class="pill">Credits: <b id="credits">…</b></div>
+    <div class="user hidden" id="userBar">
+      <span class="email" id="userEmail"></span>
+      <div class="pill">Credits: <b id="credits">…</b></div>
+      <button type="button" class="ghost" id="logoutBtn">Log out</button>
+    </div>
   </header>
 
-  <div class="grid">
+  <div id="bootView" class="loading"><span class="spin" style="display:inline-block"></span> Loading…</div>
+
+  <!-- Login / sign up / reset -->
+  <section id="authView" class="card auth hidden">
+    <div class="tabs" id="authTabs">
+      <button type="button" id="tabLogin" class="on">Log in</button>
+      <button type="button" id="tabSignup">Sign up</button>
+    </div>
+    <h2 id="authTitle">Welcome back</h2>
+    <p id="authSub">Log in with your email to make music.</p>
+    <form id="authForm">
+      <div id="emailRow">
+        <label for="authEmail">Email</label>
+        <input type="email" id="authEmail" autocomplete="email" required placeholder="you@example.com" style="width:100%;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font:inherit">
+      </div>
+      <div id="passRow">
+        <label for="authPass">Password <small>(at least 6 characters)</small></label>
+        <input type="password" id="authPass" autocomplete="current-password" minlength="6" placeholder="••••••••" style="width:100%;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font:inherit">
+      </div>
+      <button class="btn" type="submit" id="authBtn">Log in</button>
+      <div id="authMsg" class="msg hidden"></div>
+    </form>
+    <div class="links">
+      <button type="button" class="link" id="forgotBtn">Forgot password?</button>
+      <button type="button" class="link hidden" id="backBtn">← Back to log in</button>
+    </div>
+  </section>
+
+  <div class="grid hidden" id="appView">
     <!-- Create form -->
     <section class="card">
       <div class="tabs">
@@ -189,11 +230,19 @@
   <footer>Powered by the Suno API · Songs are kept by Suno for 14 days, so download the ones you love.</footer>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const API = "/.netlify/functions/suno";
-const STORE_KEY = "suno-studio-history";
+// Supabase login (URL + publishable key are safe to be public; data is protected by Row Level Security).
+const SUPABASE_URL = "https://ezbmuthkuytkycgxokoh.supabase.co";
+const SUPABASE_KEY = "sb_publishable_gmYQdCfC5rEnmMQJyUW47A_3il6yA1y";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 const $ = (id) => document.getElementById(id);
 let mode = "simple";
+let session = null;
+let history = [];
+let runId = 0; // bumps on login/logout so old polling loops stop
 
 const IDEAS = [
   "A chill lo-fi beat for studying late at night",
@@ -208,11 +257,11 @@ const STYLES = ["pop", "hip hop", "lo-fi", "rock", "edm", "r&b", "jazz", "countr
 async function api(action, { method = "GET", body, taskId } = {}) {
   const qs = new URLSearchParams({ action });
   if (taskId) qs.set("taskId", taskId);
-  const res = await fetch(`${API}?${qs}`, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const { data: { session: s } } = await sb.auth.getSession();
+  const headers = { Authorization: `Bearer ${s?.access_token || ""}` };
+  if (body) headers["Content-Type"] = "application/json";
+  const res = await fetch(`${API}?${qs}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401) throw new Error("Your login expired. Please log in again.");
   const data = await res.json().catch(() => ({ code: res.status, msg: "Bad response from server" }));
   if (data.code !== 200) throw new Error(friendlyError(data));
   return data.data;
@@ -220,7 +269,7 @@ async function api(action, { method = "GET", body, taskId } = {}) {
 
 function friendlyError(d) {
   const map = {
-    401: "API key is wrong or missing.",
+    401: "Suno API key is wrong or missing.",
     405: "Too many requests. Please wait a moment.",
     413: "Your text is too long.",
     429: "Not enough credits.",
@@ -230,20 +279,33 @@ function friendlyError(d) {
   return map[d.code] || d.msg || "Something went wrong.";
 }
 
-function showMsg(text, type = "err") {
-  const el = $("formMsg");
+function showMsg(text, type = "err", el = $("formMsg")) {
   el.textContent = text;
   el.className = `msg ${type}`;
-  if (type === "ok") setTimeout(() => el.classList.add("hidden"), 4000);
 }
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtTime = (s) => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function loadHistory() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { return []; } }
-function saveHistory(h) { try { localStorage.setItem(STORE_KEY, JSON.stringify(h.slice(0, 30))); } catch {} }
-let history = loadHistory();
+// ---------- song history (saved in Supabase, per user) ----------
+async function loadHistory() {
+  const { data, error } = await sb.from("songs")
+    .select("task_id,label,status,error,tracks,created_at")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) { console.error(error); return []; }
+  return data.map((r) => ({ taskId: r.task_id, label: r.label, status: r.status, error: r.error, tracks: r.tracks || [] }));
+}
+
+async function saveTask(t, isNew = false) {
+  const row = { task_id: t.taskId, label: t.label, status: t.status, error: t.error || null, tracks: t.tracks || [] };
+  const q = isNew
+    ? sb.from("songs").insert(row)
+    : sb.from("songs").update(row).eq("task_id", t.taskId);
+  const { error } = await q;
+  if (error) console.error("Could not save song:", error.message);
+}
 
 // ---------- credits ----------
 async function refreshCredits() {
@@ -251,7 +313,135 @@ async function refreshCredits() {
   catch { $("credits").textContent = "—"; }
 }
 
-// ---------- UI setup ----------
+// ---------- auth UI ----------
+let authMode = "login"; // login | signup | forgot | reset
+
+function setAuthMode(m) {
+  authMode = m;
+  $("authMsg").classList.add("hidden");
+  $("tabLogin").classList.toggle("on", m === "login");
+  $("tabSignup").classList.toggle("on", m === "signup");
+  $("authTabs").classList.toggle("hidden", m === "forgot" || m === "reset");
+  $("emailRow").classList.toggle("hidden", m === "reset");
+  $("passRow").classList.toggle("hidden", m === "forgot");
+  $("forgotBtn").classList.toggle("hidden", m !== "login");
+  $("backBtn").classList.toggle("hidden", m !== "forgot");
+  $("authPass").value = "";
+  $("authPass").autocomplete = m === "login" ? "current-password" : "new-password";
+  const text = {
+    login: ["Welcome back", "Log in with your email to make music.", "Log in"],
+    signup: ["Create an account", "Sign up with your email. It's free.", "Sign up"],
+    forgot: ["Reset your password", "We'll email you a link to set a new password.", "Send reset link"],
+    reset: ["Set a new password", "Type your new password below.", "Save new password"],
+  }[m];
+  $("authTitle").textContent = text[0];
+  $("authSub").textContent = text[1];
+  $("authBtn").textContent = text[2];
+}
+$("tabLogin").onclick = () => setAuthMode("login");
+$("tabSignup").onclick = () => setAuthMode("signup");
+$("forgotBtn").onclick = () => setAuthMode("forgot");
+$("backBtn").onclick = () => setAuthMode("login");
+
+$("authForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const email = $("authEmail").value.trim();
+  const password = $("authPass").value;
+  const msg = $("authMsg");
+  if (authMode !== "forgot" && password.length < 6) return showMsg("Password must be at least 6 characters.", "err", msg);
+
+  const btn = $("authBtn");
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Please wait…";
+  try {
+    if (authMode === "login") {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    } else if (authMode === "signup") {
+      const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin } });
+      if (error) throw error;
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        throw new Error("This email already has an account. Try logging in.");
+      }
+      if (!data.session) showMsg("Almost done! Check your email and click the link to confirm your account.", "ok", msg);
+    } else if (authMode === "forgot") {
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin });
+      if (error) throw error;
+      showMsg("If that email has an account, a reset link is on its way.", "ok", msg);
+    } else if (authMode === "reset") {
+      const { error } = await sb.auth.updateUser({ password });
+      if (error) throw error;
+      history_replace();
+      setAuthMode("login");
+      await showApp();
+    }
+  } catch (err) {
+    showMsg(authError(err), "err", msg);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+};
+
+function authError(err) {
+  const m = (err && err.message) || "Something went wrong.";
+  if (/invalid login credentials/i.test(m)) return "Wrong email or password.";
+  if (/email not confirmed/i.test(m)) return "Please confirm your email first. Check your inbox.";
+  if (/rate limit/i.test(m)) return "Too many tries. Please wait a few minutes.";
+  return m;
+}
+
+// Clean ?code= / #access_token from the URL after email links.
+function history_replace() {
+  if (location.hash || location.search) window.history.replaceState(null, "", location.pathname);
+}
+
+$("logoutBtn").onclick = async () => { await sb.auth.signOut(); };
+
+// ---------- switching views ----------
+function showAuth() {
+  runId++;
+  session = null; history = [];
+  $("bootView").classList.add("hidden");
+  $("appView").classList.add("hidden");
+  $("userBar").classList.add("hidden");
+  $("authView").classList.remove("hidden");
+}
+
+async function showApp() {
+  const my = ++runId;
+  $("bootView").classList.add("hidden");
+  $("authView").classList.add("hidden");
+  $("appView").classList.remove("hidden");
+  $("userBar").classList.remove("hidden");
+  $("userEmail").textContent = session.user.email;
+  $("credits").textContent = "…";
+  history = await loadHistory();
+  if (my !== runId) return;
+  render();
+  refreshCredits();
+  history.filter((t) => !isFinished(t)).forEach((t) => poll(t, my));
+}
+
+sb.auth.onAuthStateChange((event, s) => {
+  // Run outside the callback so Supabase calls inside don't deadlock.
+  setTimeout(() => {
+    if (event === "PASSWORD_RECOVERY") {
+      session = s;
+      $("bootView").classList.add("hidden");
+      $("appView").classList.add("hidden");
+      $("authView").classList.remove("hidden");
+      setAuthMode("reset");
+      return;
+    }
+    if (authMode === "reset" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
+    if (!s) return showAuth();
+    const changedUser = !session || session.user.id !== s.user.id;
+    session = s;
+    if (changedUser) { history_replace(); showApp(); }
+  }, 0);
+});
+
+// ---------- create form setup ----------
 function setMode(m) {
   mode = m;
   $("tabSimple").classList.toggle("on", m === "simple");
@@ -328,12 +518,13 @@ $("form").onsubmit = async (e) => {
   btn.disabled = true; btn.textContent = "Sending…";
   try {
     const { taskId } = await api("generate", { method: "POST", body: req.body });
-    const task = { taskId, label: req.label, status: "PENDING", tracks: [], created: Date.now() };
+    const task = { taskId, label: req.label, status: "PENDING", tracks: [] };
     history.unshift(task);
-    saveHistory(history);
     render();
+    await saveTask(task, true);
     showMsg("Started! Your song will show up on the right.", "ok");
-    poll(task);
+    setTimeout(() => $("formMsg").classList.add("hidden"), 4000);
+    poll(task, runId);
   } catch (err) {
     showMsg(err.message);
   } finally {
@@ -342,6 +533,7 @@ $("form").onsubmit = async (e) => {
 };
 
 const FAIL = /FAIL|ERROR|EXCEPTION/;
+const isFinished = (t) => t.status === "SUCCESS" || t.status === "TIMEOUT" || FAIL.test(t.status);
 const STATUS_TEXT = {
   PENDING: "Starting…",
   TEXT_SUCCESS: "Writing lyrics…",
@@ -350,17 +542,20 @@ const STATUS_TEXT = {
   SENSITIVE_WORD_ERROR: "Blocked: sensitive words",
 };
 
-async function poll(task) {
+async function poll(task, my) {
   const started = Date.now();
   while (Date.now() - started < 10 * 60 * 1000) {
+    if (my !== runId) return; // user logged out or switched
     try {
       const d = await api("status", { taskId: task.taskId });
+      const before = task.status + (task.tracks || []).length;
       task.status = d.status || "PENDING";
       task.error = d.errorMessage || "";
       const tracks = d.response?.sunoData || [];
       if (tracks.length) task.tracks = tracks;
-      saveHistory(history);
+      if (my !== runId) return;
       render();
+      if (before !== task.status + task.tracks.length) await saveTask(task);
       if (task.status === "SUCCESS") { refreshCredits(); return; }
       if (FAIL.test(task.status)) return;
     } catch (err) {
@@ -371,7 +566,8 @@ async function poll(task) {
   }
   task.status = "TIMEOUT";
   task.error = "Took too long. Try refreshing later.";
-  saveHistory(history); render();
+  await saveTask(task);
+  render();
 }
 
 // ---------- render ----------
@@ -421,9 +617,12 @@ $("list").onclick = (e) => {
   if (id) $("ly-" + id)?.classList.toggle("hidden");
 };
 
-$("clearBtn").onclick = () => {
-  if (!history.length || !confirm("Remove all songs from this list?")) return;
-  history = []; saveHistory(history); render();
+$("clearBtn").onclick = async () => {
+  if (!history.length || !confirm("Delete all your songs from this list?")) return;
+  runId++; // stop any polling
+  const { error } = await sb.from("songs").delete().eq("user_id", session.user.id);
+  if (error) return showMsg("Could not delete: " + error.message);
+  history = []; render();
 };
 
 // ---------- AI lyrics ----------
@@ -453,10 +652,10 @@ $("writeLyricsBtn").onclick = async () => {
   }
 };
 
+
 // ---------- start ----------
-render();
-refreshCredits();
-history.filter((t) => !["SUCCESS", "TIMEOUT"].includes(t.status) && !FAIL.test(t.status)).forEach(poll);
+// Show the login screen right away if nobody is signed in.
+sb.auth.getSession().then(({ data }) => { if (!data.session && authMode !== "reset") showAuth(); });
 </script>
 </body>
 </html>
