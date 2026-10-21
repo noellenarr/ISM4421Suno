@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Homework Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>📚 Homework Planner</h1>
+    <div class="top-actions">
+      <button id="notifyBtn" class="ghost">🔔 Turn on reminders</button>
+      <button id="addBtn" class="primary">+ New assignment</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Calendar -->
+    <section class="card calendar">
+      <div class="cal-head">
+        <button id="prevMonth" class="ghost" aria-label="Previous month">‹</button>
+        <h2 id="monthLabel"></h2>
+        <button id="nextMonth" class="ghost" aria-label="Next month">›</button>
+      </div>
+      <button id="todayBtn" class="link">Go to today</button>
+      <div class="weekdays">
+        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+      </div>
+      <div id="calGrid" class="cal-grid"></div>
+    </section>
+
+    <!-- Task list -->
+    <section class="card list">
+      <div class="list-head">
+        <h2 id="listTitle">Upcoming</h2>
+        <div class="filters" id="filters">
+          <button data-filter="day" class="chip">Selected day</button>
+          <button data-filter="upcoming" class="chip active">Upcoming</button>
+          <button data-filter="overdue" class="chip">Overdue</button>
+          <button data-filter="done" class="chip">Done</button>
+          <button data-filter="all" class="chip">All</button>
+        </div>
+      </div>
+      <p id="stats" class="muted"></p>
+      <ul id="taskList" class="tasks"></ul>
+      <p id="empty" class="empty" hidden>Nothing here yet. Click <b>+ New assignment</b> to add one.</p>
+    </section>
+  </main>
+
+  <!-- Add / edit form -->
+  <dialog id="taskDialog">
+    <form id="taskForm" method="dialog">
+      <h2 id="formTitle">New assignment</h2>
+
+      <label>Title
+        <input name="title" required placeholder="e.g. Chapter 5 reading">
+      </label>
+
+      <div class="row">
+        <label>Class
+          <input name="course" list="courseList" placeholder="e.g. ISM 4421">
+          <datalist id="courseList"></datalist>
+        </label>
+        <label>Type
+          <select name="type">
+            <option>Homework</option>
+            <option>To-do</option>
+            <option>Exam</option>
+            <option>Project</option>
+            <option>Reading</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Due date
+          <input name="date" type="date" required>
+        </label>
+        <label>Time
+          <input name="time" type="time" value="23:59">
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Priority
+          <select name="priority">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+        <label>Remind me
+          <select name="remind">
+            <option value="">No reminder</option>
+            <option value="0">At due time</option>
+            <option value="15">15 min before</option>
+            <option value="60">1 hour before</option>
+            <option value="1440">1 day before</option>
+            <option value="2880">2 days before</option>
+          </select>
+        </label>
+      </div>
+
+      <label>Notes
+        <textarea name="notes" rows="2" placeholder="Anything to remember"></textarea>
+      </label>
+
+      <fieldset>
+        <legend>Checklist</legend>
+        <ul id="formChecklist" class="form-checklist"></ul>
+        <div class="add-step">
+          <input id="stepInput" placeholder="Add a step, then press Enter">
+          <button type="button" id="stepAdd" class="ghost">Add</button>
+        </div>
+      </fieldset>
+
+      <div class="form-actions">
+        <button type="button" id="deleteBtn" class="danger" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" id="cancelBtn" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
